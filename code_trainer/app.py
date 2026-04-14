@@ -1,15 +1,8 @@
 import random
 
 import streamlit as st
-from bs4 import BeautifulSoup
 
-from code_trainer.api_client import fetch_leetcode_problem_raw
 from code_trainer.evaluator import run_tests
-from code_trainer.tasks import (
-    build_leetcode_starter_code,
-    extract_python_method_signature,
-    parse_leetcode_examples_from_html,
-)
 from code_trainer.ui.auth import render_auth
 from code_trainer.ui.lang import strip_garumzimes_accents, strip_number_prefix, translate_to_lv
 from code_trainer.ui.problem_loader import load_tasks_uzdevumi
@@ -81,31 +74,24 @@ def run_app() -> None:
             st.stop()
 
         if st.session_state.last_loaded_title_slug != st.session_state.selected_title_slug:
-            raw_question = fetch_leetcode_problem_raw(st.session_state.selected_title_slug)
-            saturs_html = raw_question.get("content") or ""
-            try:
-                plain = BeautifulSoup(saturs_html, "html.parser").get_text("\n", strip=True)
-            except Exception:
-                plain = saturs_html
+            selected = st.session_state.selected_problem_meta or {}
+            plain = selected.get("description", "")
             st.session_state.question_en = plain
             st.session_state.question_lv = translate_to_lv(plain) or strip_garumzimes_accents(plain)
 
-            code_snippets = raw_question.get("codeSnippets") or []
-            method_name, param_names = extract_python_method_signature(code_snippets)
-            st.session_state.method_name = method_name
-            st.session_state.param_names = param_names
+            st.session_state.method_name = "solution"
+            st.session_state.param_names = []
+            st.session_state.unordered_output = False
+            st.session_state.all_examples = selected.get("examples", [])
+            all_test_cases = selected.get("test_cases", [])
 
-            tests, unordered_output = parse_leetcode_examples_from_html(saturs_html, param_names)
-            st.session_state.all_examples = tests
-            st.session_state.unordered_output = unordered_output
-
-            if tests:
-                k = min(st.session_state.tests_to_run, len(tests))
-                st.session_state.tests = random.sample(tests, k=k)
+            if all_test_cases:
+                k = min(st.session_state.tests_to_run, len(all_test_cases))
+                st.session_state.tests = random.sample(all_test_cases, k=k)
             else:
                 st.session_state.tests = []
 
-            st.session_state.editor_code = build_leetcode_starter_code(method_name, param_names)
+            st.session_state.editor_code = "# raksti kodu seit\n"
             st.session_state.last_loaded_title_slug = st.session_state.selected_title_slug
 
         meta = st.session_state.selected_problem_meta or {}
@@ -113,6 +99,11 @@ def run_app() -> None:
             pamata_title = strip_number_prefix(meta.get("title", ""))
             st.markdown(f"### {translate_to_lv(pamata_title) or pamata_title}")
             st.caption(f"Grutibas pakape: {meta.get('difficulty', '')}")
+            constraints = meta.get("constraints") or []
+            if constraints:
+                with st.expander("Ierobezojumi"):
+                    for i, c in enumerate(constraints, start=1):
+                        st.write(f"{i}) {c}")
 
         if st.session_state.all_examples:
             max_k = len(st.session_state.all_examples)
@@ -147,7 +138,7 @@ def run_app() -> None:
                 for i, (inp, exp) in enumerate(st.session_state.all_examples, start=1):
                     st.write(f"{i}) Ievade: {inp} | Izvade: {exp}")
 
-        st.caption("Atbildei jabut funkcijai `solution()` (starter koda ta jau ir).")
+        st.caption("Atbildei jabut funkcijai `solution()`.")
         if st_ace is not None:
             user_code = st_ace(
                 value=st.session_state.editor_code,
@@ -169,25 +160,20 @@ def run_app() -> None:
                 "Python kods",
                 key="editor_code",
                 height=360,
-                placeholder="class Solution:\n    def myMethod(self, ...):\n        pass\n\ndef solution(*args):\n    return Solution().myMethod(*args)\n",
+                placeholder="# raksti kodu seit",
             )
             st.info("Lai Tab/indent stradatu ka ista redaktora: `pip install -r requirements.txt`.")
 
-        with st.expander("Risinajums"):
-            st.caption("Atvers LeetCode risinajuma lapu (oficialais raksts).")
-            st.markdown(
-                f"[Atvert risinajumu]({('https://leetcode.com/problems/' + st.session_state.selected_title_slug + '/solution/')})"
-            )
-
         if st.button("Parbaudit"):
-            if st.session_state.all_examples:
-                k = min(st.session_state.tests_to_run, len(st.session_state.all_examples))
-                st.session_state.tests = random.sample(st.session_state.all_examples, k=k)
+            all_test_cases = (st.session_state.selected_problem_meta or {}).get("test_cases", [])
+            if all_test_cases:
+                k = min(st.session_state.tests_to_run, len(all_test_cases))
+                st.session_state.tests = random.sample(all_test_cases, k=k)
             else:
                 st.session_state.tests = []
 
             if not st.session_state.tests:
-                st.warning("Sim uzdevumam neizdevas izvilkt testus no piemeriem (Input/Output parsesana).")
+                st.warning("Sim uzdevumam nav testu datu.")
             else:
                 ok, message, failed = run_tests(
                     user_code=user_code,
@@ -211,4 +197,3 @@ def run_app() -> None:
                             st.write(
                                 f"{i}) input={item['input']} | expected={item['expected']} | got={item['got']}"
                             )
-
