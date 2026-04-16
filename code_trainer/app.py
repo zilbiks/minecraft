@@ -6,8 +6,9 @@ from code_trainer.evaluator import run_tests
 from code_trainer.ui.auth import render_auth
 from code_trainer.ui.lang import strip_garumzimes_accents, strip_number_prefix, translate_to_lv
 from code_trainer.ui.problem_loader import load_tasks_uzdevumi
+from code_trainer.ui.rank import get_daily_streak, get_rank_progress
 from code_trainer.ui.state import init_session_state
-from database import init_db, mark_solved
+from database import get_solved_activity_dates, init_db, mark_solved
 
 try:
     from streamlit_ace import st_ace
@@ -63,6 +64,20 @@ def run_app() -> None:
             st.session_state.selected_problem_meta = task
 
             st.write(f"atrisinats: **{len(st.session_state.solved)} / {len(st.session_state.problems)}**")
+            rank_info = get_rank_progress(len(st.session_state.solved))
+            st.metric("Codewars-style ranks", str(rank_info["rank_name"]))
+            st.progress(int(rank_info["progress_pct"]))
+            if rank_info["next_rank_name"]:
+                st.caption(
+                    f"Lidz {rank_info['next_rank_name']}: vel {rank_info['remaining_to_next']} uzdevumi"
+                )
+            else:
+                st.caption("Sasniegts maksimalais lokalais ranks.")
+
+            user_id = st.session_state.get("user_id")
+            if user_id is not None:
+                streak = get_daily_streak(get_solved_activity_dates(int(user_id)))
+                st.metric("Daily streak", f"{streak} dienas")
         else:
             st.warning("neizdevas ieladet uzdevumus")
 

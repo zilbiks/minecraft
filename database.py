@@ -1,11 +1,13 @@
 import hashlib
+import hmac
 import os
 import sqlite3
-from dataclasses import dataclass
+from datetime import date
 from typing import Optional, Set
 
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "data.db")
+PBKDF2_ITERATIONS = 200_000
 
 
 def connect() -> sqlite3.Connection:
@@ -40,7 +42,34 @@ def init_db() -> None:
 
 
 def hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode("utf8")).hexdigest()
+    salt = os.urandom(16).hex()
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf8"),
+        bytes.fromhex(salt),
+        PBKDF2_ITERATIONS,
+    ).hex()
+    return f"pbkdf2_sha256${PBKDF2_ITERATIONS}${salt}${digest}"
+
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    if stored_hash.startswith("pbkdf2_sha256$"):
+        try:
+            _, iterations_raw, salt, expected = stored_hash.split("$", 3)
+            iterations = int(iterations_raw)
+        except (ValueError, TypeError):
+            return False
+        computed = hashlib.pbkdf2_hmac(
+            "sha256",
+            (password or "").encode("utf8"),
+            bytes.fromhex(salt),
+            iterations,
+        ).hex()
+        return hmac.compare_digest(computed, expected)
+
+    legacy_hash = hashlib.sha256((password or "").encode("utf8")).hexdigest()
+    return hmac.compare_digest(legacy_hash, stored_hash)
+
 
 def create_user(username: str, password: str) -> tuple[bool, str]:
     username = (username or "").strip()
@@ -63,13 +92,18 @@ def create_user(username: str, password: str) -> tuple[bool, str]:
 
 def authenticate_user(username: str, password: str) -> Optional[int]:
     username = (username or "").strip()
-    pw_hash = hash_password(password or "")
     with connect() as con:
         row = con.execute(
-            "SELECT id FROM users WHERE username = ? AND password_hash = ?;",
-            (username, pw_hash),
+            "SELECT id, password_hash FROM users WHERE username = ?;",
+            (username,),
         ).fetchone()
-    return int(row[0]) if row else None
+    if not row:
+        return None
+
+    user_id, stored_hash = int(row[0]), str(row[1])
+    if verify_password(password or "", stored_hash):
+        return user_id
+    return None
 
 
 def get_solved(user_id: int) -> Set[str]:
@@ -89,3 +123,22 @@ def mark_solved(user_id: int, title_slug: str) -> None:
             "INSERT OR IGNORE INTO solved(user_id, title_slug) VALUES(?, ?);",
             (int(user_id), str(title_slug)),
         )
+
+
+def get_solved_activity_dates(user_id: int) -> Set[date]:
+    with connect() as con:
+        rows = con.execute(
+            "SELECT DISTINCT date(solved_at) FROM solved WHERE user_id = ?;",
+            (int(user_id),),
+        ).fetchall()
+
+    parsed: Set[date] = set()
+    for row in rows:
+        raw = row[0]
+        if not raw:
+            continue
+        try:
+            parsed.add(date.fromisoformat(str(raw)))
+        except ValueError:
+            continue
+    return parsed

@@ -1,5 +1,6 @@
 import csv
 import json
+import random
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -83,4 +84,16 @@ def load_dataset_problems(difficulty: str, limit: int = 15, skip: int = 0) -> Li
                 }
             )
 
+    if skip < 0:
+        skip = 0
     return problems[skip : skip + limit]
+
+
+def load_random_dataset_problems(difficulty: str, limit: int = 15) -> List[Dict[str, Any]]:
+    problems = load_dataset_problems(difficulty=difficulty, limit=10_000, skip=0)
+    if not problems:
+        return []
+    if len(problems) <= limit:
+        random.shuffle(problems)
+        return problems
+    return random.sample(problems, k=limit)
